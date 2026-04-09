@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.7.0"
+    plugin_version = "1.7.1"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -576,35 +576,58 @@ class CloudDriveSearch(_PluginBase):
                     logger.info(
                         f"[CloudDriveSearch] async_search_by_title: "
                         f"{title}")
-                    from app.schemas.context import Context
-                    from app.core.metainfo import MetaInfo
 
                     raw = plugin._do_search(keyword=title, page=1)
+                    logger.info(
+                        f"[CloudDriveSearch] _do_search 返回 "
+                        f"{len(raw)} 条原始结果")
+
+                    # 查看原始结果的格式以确定如何包装
+                    if original_results:
+                        first_orig = original_results[0]
+                        has_to_dict = hasattr(first_orig, 'to_dict')
+                        logger.info(
+                            f"[CloudDriveSearch] 原始结果类型: "
+                            f"{type(first_orig).__name__}, "
+                            f"has to_dict: {has_to_dict}")
+
                     cloud_items = []
                     for item in raw:
                         try:
                             ti = plugin._to_torrent_info(item)
-                            if ti:
-                                meta = MetaInfo(
-                                    title=ti.title,
-                                    subtitle=ti.description)
-                                ctx = Context(
-                                    meta_info=meta,
-                                    torrent_info=ti)
-                                # 动态添加 to_dict（兼容不同版本）
+                            if not ti:
+                                continue
+                            # 尝试和原始结果用相同的包装方式
+                            if original_results and hasattr(
+                                    original_results[0], 'torrent_info'):
+                                # 原始结果是 Context 类型
+                                from app.schemas.context import Context
+                                try:
+                                    from app.core.metainfo import MetaInfo
+                                except ImportError:
+                                    from app.core.meta import MetaInfo
+                                meta = MetaInfo(title=ti.title,
+                                                subtitle=ti.description)
+                                ctx = Context(meta_info=meta,
+                                              torrent_info=ti)
                                 if not hasattr(ctx, 'to_dict'):
                                     ctx.to_dict = lambda c=ctx: {
-                                        "torrent_info": c.torrent_info.dict()
-                                        if c.torrent_info else {},
+                                        "torrent_info":
+                                            c.torrent_info.dict()
+                                            if c.torrent_info else {},
                                         "meta_info": {
                                             "title": getattr(
-                                                c.meta_info, 'name', '')
-                                            if c.meta_info else ''},
+                                                c.meta_info, 'name',
+                                                '') if c.meta_info
+                                            else ''},
                                     }
                                 cloud_items.append(ctx)
+                            else:
+                                # 原始结果是 TorrentInfo 类型
+                                cloud_items.append(ti)
                         except Exception as ie:
-                            logger.debug(
-                                f"[CloudDriveSearch] 跳过: {ie}")
+                            logger.warning(
+                                f"[CloudDriveSearch] 包装跳过: {ie}")
                             continue
 
                     plugin._last_call_result_count = len(cloud_items)
@@ -613,10 +636,10 @@ class CloudDriveSearch(_PluginBase):
                         f"[CloudDriveSearch] 云盘搜索完成: "
                         f"{len(cloud_items)} 条")
                 except Exception as e:
+                    plugin._last_call_keyword += f" [ERR:{e}]"
                     logger.error(
                         f"[CloudDriveSearch] 异常: {e}",
                         exc_info=True)
-                    # 回退：移除所有云盘结果
                     if len(original_results) > original_count:
                         del original_results[original_count:]
 
