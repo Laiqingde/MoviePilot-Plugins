@@ -3,7 +3,7 @@
     "name": "网盘资源搜索",
     "description": "搜索网盘资源，支持PanSou/yz_pansearch/Nullbr多后端，支持115、123、夸克、百度等网盘，可集成到系统搜索",
     "labels": "搜索,网盘",
-    "version": "1.5.3",
+    "version": "1.5.4",
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/main/icons/clouddisk.png",
     "author": "早点下班",
     "level": 1

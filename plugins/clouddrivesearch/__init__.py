@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.5.3"
+    plugin_version = "1.5.4"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -885,6 +885,13 @@ class CloudDriveSearch(_PluginBase):
                 "summary": "诊断信息",
                 "description": "返回插件状态和get_module信息",
             },
+            {
+                "path": "/test_torrent",
+                "endpoint": self.api_test_torrent,
+                "methods": ["GET"],
+                "summary": "测试TorrentInfo序列化",
+                "description": "测试TorrentInfo对象的序列化方法",
+            },
         ]
 
     def api_search(self, keyword: str = "", page: int = 1) -> dict:
@@ -915,6 +922,34 @@ class CloudDriveSearch(_PluginBase):
             except Exception:
                 status[b.name] = False
         return {"code": 0, "data": status}
+
+    def api_test_torrent(self) -> dict:
+        """测试 TorrentInfo 序列化"""
+        try:
+            from app.schemas.context import TorrentInfo
+            ti = TorrentInfo(
+                title="测试资源",
+                description="[115网盘] 测试",
+                enclosure="https://example.com",
+                page_url="https://example.com",
+                size=0, seeders=0, peers=0,
+                site_name="PanSou-115网盘",
+                site=0,
+                uploadvolumefactor=0.0,
+                downloadvolumefactor=0.0,
+            )
+            # 测试各种序列化方法
+            result = {"fields": list(ti.__dict__.keys()) if hasattr(ti, '__dict__') else []}
+            if hasattr(ti, 'to_dict'):
+                result["to_dict"] = str(ti.to_dict())[:200]
+            if hasattr(ti, 'dict'):
+                result["dict"] = str(ti.dict())[:200]
+            if hasattr(ti, 'model_dump'):
+                result["model_dump"] = str(ti.model_dump())[:200]
+            result["methods"] = [m for m in dir(ti) if 'dict' in m.lower() or 'dump' in m.lower() or 'json' in m.lower()]
+            return {"code": 0, "data": result}
+        except Exception as e:
+            return {"code": 1, "error": str(e)}
 
     def api_debug(self) -> dict:
         """诊断信息"""
