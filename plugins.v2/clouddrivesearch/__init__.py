@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.5.1"
+    plugin_version = "1.5.3"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -562,6 +562,9 @@ class CloudDriveSearch(_PluginBase):
                 if original_results is None:
                     original_results = []
 
+                # 保存原始结果数，用于回退
+                original_count = len(original_results)
+
                 if not title:
                     return original_results
 
@@ -574,22 +577,34 @@ class CloudDriveSearch(_PluginBase):
                         f"[CloudDriveSearch] async_search_by_title: "
                         f"{title}")
                     raw = plugin._do_search(keyword=title, page=1)
-                    count = 0
+                    cloud_items = []
                     for item in raw:
                         try:
                             ti = plugin._to_torrent_info(item)
                             if ti:
-                                original_results.append(ti)
-                                count += 1
-                        except Exception:
+                                # 验证 to_dict 能正常工作
+                                if hasattr(ti, 'to_dict'):
+                                    ti.to_dict()
+                                elif hasattr(ti, 'dict'):
+                                    ti.dict()
+                                cloud_items.append(ti)
+                        except Exception as ie:
+                            logger.debug(
+                                f"[CloudDriveSearch] 跳过: {ie}")
                             continue
-                    plugin._last_call_result_count = count
+
+                    plugin._last_call_result_count = len(cloud_items)
+                    original_results.extend(cloud_items)
                     logger.info(
-                        f"[CloudDriveSearch] 云盘搜索完成: {count} 条")
+                        f"[CloudDriveSearch] 云盘搜索完成: "
+                        f"{len(cloud_items)} 条")
                 except Exception as e:
                     logger.error(
                         f"[CloudDriveSearch] 异常: {e}",
                         exc_info=True)
+                    # 回退：移除所有云盘结果
+                    if len(original_results) > original_count:
+                        del original_results[original_count:]
 
                 return original_results
 
