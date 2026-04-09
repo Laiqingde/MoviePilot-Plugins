@@ -89,30 +89,50 @@ class PanSouBackend(CloudSearchBackend):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self.token = config.get("token", "")
+        self.username = config.get("username", "")
+        self.password = config.get("password", "")
+        self._jwt_token = ""
 
     @property
     def name(self) -> str:
         return "PanSou"
 
+    def _login(self) -> str:
+        """JWT 登录获取 token"""
+        if not self.username or not self.password:
+            return ""
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/auth/login",
+                json={
+                    "username": self.username,
+                    "password": self.password,
+                },
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                self._jwt_token = resp.json().get("token", "")
+                return self._jwt_token
+        except Exception as e:
+            logger.warning(f"PanSou 登录失败: {e}")
+        return ""
+
     def _headers(self) -> dict:
         headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token}"
+        if not self._jwt_token and self.username:
+            self._login()
+        if self._jwt_token:
+            headers["Authorization"] = f"Bearer {self._jwt_token}"
         return headers
 
     def search(self, keyword: str, cloud_types: List[str],
                page: int = 1) -> List[dict]:
         results = []
         try:
-            # 构建 cloud_types 参数
-            type_param = ",".join(cloud_types) if cloud_types else ""
             payload = {
                 "kw": keyword,
                 "res": "all",
             }
-            if type_param:
-                payload["cloud_types"] = type_param
 
             resp = requests.post(
                 f"{self.base_url}/api/search",
@@ -120,46 +140,56 @@ class PanSouBackend(CloudSearchBackend):
                 headers=self._headers(),
                 timeout=self.timeout,
             )
+            # token 过期时重新登录重试
+            if resp.status_code == 401 and self.username:
+                self._jwt_token = ""
+                resp = requests.post(
+                    f"{self.base_url}/api/search",
+                    json=payload,
+                    headers=self._headers(),
+                    timeout=self.timeout,
+                )
             resp.raise_for_status()
             data = resp.json()
 
-            # 解析 results 数组
-            for item in data.get("results", []):
-                title = item.get("title", "")
-                content = item.get("content", "")
-                link = item.get("link", "")
-                password = item.get("password", "")
-                date_str = item.get("datetime", "")
-                source = item.get("source", "")
-
-                # 从 link 推断网盘类型
-                cloud_type = self._detect_cloud_type(link, source)
-
-                results.append({
-                    "title": title,
-                    "description": content,
-                    "cloud_type": cloud_type,
-                    "url": link,
-                    "password": password,
-                    "date": date_str,
-                    "source_backend": self.name,
-                })
-
-            # 也处理 merged_by_type 分组结果
-            merged = data.get("merged_by_type", {})
+            # PanSou 返回 data.merged_by_type 按网盘类型分组
+            resp_data = data.get("data", data)
+            merged = resp_data.get("merged_by_type", {})
             for ctype, items in merged.items():
                 normalized = normalize_cloud_type(ctype)
+                if cloud_types and normalized not in cloud_types:
+                    continue
                 for item in (items or []):
                     if isinstance(item, dict):
                         results.append({
-                            "title": item.get("title", ""),
-                            "description": item.get("content", ""),
+                            "title": item.get("note", "")
+                                     or item.get("title", ""),
+                            "description": item.get("source", ""),
                             "cloud_type": normalized,
-                            "url": item.get("link", ""),
+                            "url": item.get("url", "")
+                                   or item.get("link", ""),
                             "password": item.get("password", ""),
                             "date": item.get("datetime", ""),
                             "source_backend": self.name,
                         })
+
+            # 也处理顶层 results 数组（如有）
+            for item in resp_data.get("results", []):
+                link = item.get("link", "") or item.get("url", "")
+                cloud_type = self._detect_cloud_type(
+                    link, item.get("source", ""))
+                if cloud_types and cloud_type not in cloud_types:
+                    continue
+                results.append({
+                    "title": item.get("note", "")
+                             or item.get("title", ""),
+                    "description": item.get("source", ""),
+                    "cloud_type": cloud_type,
+                    "url": link,
+                    "password": item.get("password", ""),
+                    "date": item.get("datetime", ""),
+                    "source_backend": self.name,
+                })
 
         except requests.exceptions.Timeout:
             logger.warning(f"PanSou 搜索超时: {keyword}")
@@ -453,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.0.0"
+    plugin_version = "1.1.0"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -464,7 +494,8 @@ class CloudDriveSearch(_PluginBase):
     _enabled: bool = False
     _backends: list = []
     _pansou_url: str = ""
-    _pansou_token: str = ""
+    _pansou_username: str = ""
+    _pansou_password: str = ""
     _yz_url: str = ""
     _yz_token: str = ""
     _nullbr_base_url: str = "https://api.nullbr.eu.org"
@@ -479,7 +510,8 @@ class CloudDriveSearch(_PluginBase):
             self._enabled = config.get("enabled", False)
             self._backends = config.get("backends") or []
             self._pansou_url = config.get("pansou_url", "")
-            self._pansou_token = config.get("pansou_token", "")
+            self._pansou_username = config.get("pansou_username", "")
+            self._pansou_password = config.get("pansou_password", "")
             self._yz_url = config.get("yz_url", "")
             self._yz_token = config.get("yz_token", "")
             self._nullbr_base_url = config.get(
@@ -620,7 +652,8 @@ class CloudDriveSearch(_PluginBase):
         if "pansou" in self._backends and self._pansou_url:
             backends.append(PanSouBackend({
                 "base_url": self._pansou_url,
-                "token": self._pansou_token,
+                "username": self._pansou_username,
+                "password": self._pansou_password,
                 "timeout": self._timeout,
             }))
         if "yz_pansearch" in self._backends and self._yz_url:
@@ -1096,7 +1129,7 @@ class CloudDriveSearch(_PluginBase):
                             "content": [
                                 {
                                     "component": "VCol",
-                                    "props": {"cols": 12, "md": 8},
+                                    "props": {"cols": 12, "md": 4},
                                     "content": [
                                         {
                                             "component": "VTextField",
@@ -1117,8 +1150,21 @@ class CloudDriveSearch(_PluginBase):
                                         {
                                             "component": "VTextField",
                                             "props": {
-                                                "model": "pansou_token",
-                                                "label": "JWT Token (可选)",
+                                                "model": "pansou_username",
+                                                "label": "用户名 (可选)",
+                                            },
+                                        }
+                                    ],
+                                },
+                                {
+                                    "component": "VCol",
+                                    "props": {"cols": 12, "md": 4},
+                                    "content": [
+                                        {
+                                            "component": "VTextField",
+                                            "props": {
+                                                "model": "pansou_password",
+                                                "label": "密码 (可选)",
                                                 "type": "password",
                                             },
                                         }
@@ -1295,7 +1341,8 @@ class CloudDriveSearch(_PluginBase):
                 "backends": [],
                 "cloud_types": ["115", "123", "quark", "baidu"],
                 "pansou_url": "",
-                "pansou_token": "",
+                "pansou_username": "",
+                "pansou_password": "",
                 "yz_url": "",
                 "yz_token": "",
                 "nullbr_base_url": "https://api.nullbr.eu.org",
