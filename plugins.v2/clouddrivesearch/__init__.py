@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.2.0"
+    plugin_version = "1.2.1"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -707,6 +707,13 @@ class CloudDriveSearch(_PluginBase):
                 "summary": "测试后端连接",
                 "description": "测试所有已配置后端的连接状态",
             },
+            {
+                "path": "/debug",
+                "endpoint": self.api_debug,
+                "methods": ["GET"],
+                "summary": "诊断信息",
+                "description": "返回插件状态和get_module信息",
+            },
         ]
 
     def api_search(self, keyword: str = "", page: int = 1) -> dict:
@@ -737,6 +744,24 @@ class CloudDriveSearch(_PluginBase):
             except Exception:
                 status[b.name] = False
         return {"code": 0, "data": status}
+
+    def api_debug(self) -> dict:
+        """诊断信息"""
+        module_result = self.get_module()
+        has_search = "search_torrents" in module_result if module_result else False
+        return {
+            "enabled": self._enabled,
+            "search_in_system": self._search_in_system,
+            "backends": self._backends,
+            "cloud_types": self._cloud_types,
+            "timeout": self._timeout,
+            "get_module_keys": list(module_result.keys()) if module_result else [],
+            "has_search_torrents": has_search,
+            "get_state": self.get_state(),
+            "pansou_url": self._pansou_url,
+            "yz_url": self._yz_url,
+            "active_backends": [b.name for b in self._get_active_backends()],
+        }
 
     # --------------------------------------------------------
     # 远程命令
