@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.2.1"
+    plugin_version = "1.2.2"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -532,6 +532,11 @@ class CloudDriveSearch(_PluginBase):
     # 搜索缓存：避免每个站点重复搜索云盘
     _search_cache: dict = {}
     _search_cache_keyword: str = ""
+    # 调用追踪
+    _last_call_time: str = ""
+    _last_call_keyword: str = ""
+    _last_call_result_count: int = 0
+    _call_count: int = 0
 
     # --------------------------------------------------------
     # 系统搜索集成
@@ -551,7 +556,20 @@ class CloudDriveSearch(_PluginBase):
         使用缓存避免重复搜索云盘资源。
         返回 List[TorrentInfo] 合并到系统搜索结果中。
         """
+        # 记录调用
+        self._call_count += 1
+        self._last_call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._last_call_keyword = keyword or ""
+        logger.info(
+            f"[CloudDriveSearch] search_torrents 被调用! "
+            f"keyword={keyword}, site={site}, "
+            f"mtype={mtype}, page={page}, "
+            f"call_count={self._call_count}")
+
         if not self._enabled or not keyword:
+            logger.warning(
+                f"[CloudDriveSearch] 跳过: enabled={self._enabled}, "
+                f"keyword={keyword}")
             return None
 
         try:
@@ -563,11 +581,14 @@ class CloudDriveSearch(_PluginBase):
         # 使用缓存：相同关键词只搜索一次
         cache_key = f"{keyword}:{page}"
         if cache_key == self._search_cache_keyword and self._search_cache:
-            # 已经搜索过，返回缓存的结果
-            return self._search_cache.get(cache_key, [])
+            cached = self._search_cache.get(cache_key, [])
+            logger.info(
+                f"[CloudDriveSearch] 返回缓存结果: {len(cached)} 条")
+            self._last_call_result_count = len(cached)
+            return cached
 
         # 第一次搜索此关键词
-        logger.info(f"网盘资源搜索开始: {keyword}")
+        logger.info(f"[CloudDriveSearch] 网盘资源搜索开始: {keyword}")
         raw = self._do_search(keyword=keyword, page=page + 1)
         all_results = []
         for item in raw:
@@ -578,8 +599,11 @@ class CloudDriveSearch(_PluginBase):
         # 缓存结果
         self._search_cache_keyword = cache_key
         self._search_cache[cache_key] = all_results
+        self._last_call_result_count = len(all_results)
 
-        logger.info(f"网盘搜索完成，共 {len(all_results)} 条结果")
+        logger.info(
+            f"[CloudDriveSearch] 网盘搜索完成，"
+            f"共 {len(all_results)} 条结果")
         return all_results if all_results else None
 
     def _to_torrent_info(self, item: dict):
@@ -761,6 +785,12 @@ class CloudDriveSearch(_PluginBase):
             "pansou_url": self._pansou_url,
             "yz_url": self._yz_url,
             "active_backends": [b.name for b in self._get_active_backends()],
+            "call_tracking": {
+                "call_count": self._call_count,
+                "last_call_time": self._last_call_time,
+                "last_call_keyword": self._last_call_keyword,
+                "last_call_result_count": self._last_call_result_count,
+            },
         }
 
     # --------------------------------------------------------
@@ -1179,7 +1209,7 @@ class CloudDriveSearch(_PluginBase):
                                                 "model": "pansou_url",
                                                 "label": "PanSou API地址",
                                                 "placeholder":
-                                                    "http://192.168.1.100"
+                                                    "http://1.2.268.1.100"
                                                     ":8888",
                                             },
                                         }
@@ -1266,7 +1296,7 @@ class CloudDriveSearch(_PluginBase):
                                                 "label":
                                                     "yz_pansearch API地址",
                                                 "placeholder":
-                                                    "http://192.168.1.100"
+                                                    "http://1.2.268.1.100"
                                                     ":8067",
                                             },
                                         }
