@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.1.0"
+    plugin_version = "1.2.0"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -529,23 +529,29 @@ class CloudDriveSearch(_PluginBase):
     def stop_service(self):
         pass
 
+    # 搜索缓存：避免每个站点重复搜索云盘
+    _search_cache: dict = {}
+    _search_cache_keyword: str = ""
+
     # --------------------------------------------------------
     # 系统搜索集成
     # --------------------------------------------------------
     def get_module(self) -> Dict[str, Any]:
         """重载 search_torrents 模块方法，将网盘结果注入系统搜索"""
         if self._enabled and self._search_in_system:
-            return {"search_torrents": self.search_torrents_module}
+            return {"search_torrents": self.search_torrents}
         return {}
 
-    def search_torrents_module(self, site=None, keywords: list = None,
-                               mtype=None, page: int = 0,
-                               **kwargs) -> Optional[List[Any]]:
+    def search_torrents(self, site=None, keyword: str = None,
+                        mtype=None, page: int = 0,
+                        **kwargs) -> Optional[List[Any]]:
         """
-        系统搜索模块方法
-        返回 List[TorrentInfo] 合并到系统搜索结果中
+        系统搜索模块方法（V2签名：keyword为单个字符串）
+        search_torrents 会被每个站点调用一次，
+        使用缓存避免重复搜索云盘资源。
+        返回 List[TorrentInfo] 合并到系统搜索结果中。
         """
-        if not self._enabled or not keywords:
+        if not self._enabled or not keyword:
             return None
 
         try:
@@ -554,13 +560,24 @@ class CloudDriveSearch(_PluginBase):
             logger.error("无法导入 TorrentInfo，系统搜索集成失败")
             return None
 
+        # 使用缓存：相同关键词只搜索一次
+        cache_key = f"{keyword}:{page}"
+        if cache_key == self._search_cache_keyword and self._search_cache:
+            # 已经搜索过，返回缓存的结果
+            return self._search_cache.get(cache_key, [])
+
+        # 第一次搜索此关键词
+        logger.info(f"网盘资源搜索开始: {keyword}")
+        raw = self._do_search(keyword=keyword, page=page + 1)
         all_results = []
-        for kw in keywords:
-            raw = self._do_search(keyword=kw, page=page + 1)
-            for item in raw:
-                ti = self._to_torrent_info(item)
-                if ti:
-                    all_results.append(ti)
+        for item in raw:
+            ti = self._to_torrent_info(item)
+            if ti:
+                all_results.append(ti)
+
+        # 缓存结果
+        self._search_cache_keyword = cache_key
+        self._search_cache[cache_key] = all_results
 
         logger.info(f"网盘搜索完成，共 {len(all_results)} 条结果")
         return all_results if all_results else None
