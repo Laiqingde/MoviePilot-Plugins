@@ -576,15 +576,20 @@ class CloudDriveSearch(_PluginBase):
                     raw = plugin._do_search(keyword=title, page=1)
                     count = 0
                     for item in raw:
-                        ti = plugin._to_torrent_info(item)
-                        if ti:
-                            original_results.append(ti)
-                            count += 1
+                        try:
+                            ti = plugin._to_torrent_info(item)
+                            if ti:
+                                original_results.append(ti)
+                                count += 1
+                        except Exception:
+                            continue
                     plugin._last_call_result_count = count
                     logger.info(
                         f"[CloudDriveSearch] 云盘搜索完成: {count} 条")
                 except Exception as e:
-                    logger.error(f"[CloudDriveSearch] 异常: {e}")
+                    logger.error(
+                        f"[CloudDriveSearch] 异常: {e}",
+                        exc_info=True)
 
                 return original_results
 
@@ -744,22 +749,24 @@ class CloudDriveSearch(_PluginBase):
         password = item.get("password", "")
         pwd_info = f" | 提取码: {password}" if password else ""
 
-        return TorrentInfo(
-            title=item.get("title", ""),
-            description=f"[{cloud_display}] "
-                        f"{item.get('description', '')}{pwd_info}",
-            enclosure=item.get("url", ""),
-            page_url=item.get("url", ""),
-            size=0,
-            seeders=0,
-            peers=0,
-            pubdate=item.get("date", ""),
-            site_name=f"{backend}-{cloud_display}",
-            labels=[cloud_display, backend, "网盘"],
-            site=0,
-            uploadvolumefactor=0.0,
-            downloadvolumefactor=0.0,
-        )
+        try:
+            return TorrentInfo(
+                title=item.get("title", "") or "未知资源",
+                description=f"[{cloud_display}] "
+                            f"{item.get('description', '')}{pwd_info}",
+                enclosure=item.get("url", "") or "",
+                page_url=item.get("url", "") or "",
+                size=0,
+                seeders=0,
+                peers=0,
+                site_name=f"{backend}-{cloud_display}",
+                site=0,
+                uploadvolumefactor=0.0,
+                downloadvolumefactor=0.0,
+            )
+        except Exception as e:
+            logger.debug(f"[CloudDriveSearch] TorrentInfo创建失败: {e}")
+            return None
 
     # --------------------------------------------------------
     # 搜索核心
