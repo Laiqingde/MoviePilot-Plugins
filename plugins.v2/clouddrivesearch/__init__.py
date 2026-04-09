@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.5.4"
+    plugin_version = "1.6.0"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -576,18 +576,23 @@ class CloudDriveSearch(_PluginBase):
                     logger.info(
                         f"[CloudDriveSearch] async_search_by_title: "
                         f"{title}")
+                    from app.schemas.context import Context
+                    from app.core.metainfo import MetaInfo
+
                     raw = plugin._do_search(keyword=title, page=1)
                     cloud_items = []
                     for item in raw:
                         try:
                             ti = plugin._to_torrent_info(item)
                             if ti:
-                                # 验证 to_dict 能正常工作
-                                if hasattr(ti, 'to_dict'):
-                                    ti.to_dict()
-                                elif hasattr(ti, 'dict'):
-                                    ti.dict()
-                                cloud_items.append(ti)
+                                # 包装为 Context（和原始结果格式一致）
+                                meta = MetaInfo(
+                                    title=ti.title,
+                                    subtitle=ti.description)
+                                ctx = Context(
+                                    meta_info=meta,
+                                    torrent_info=ti)
+                                cloud_items.append(ctx)
                         except Exception as ie:
                             logger.debug(
                                 f"[CloudDriveSearch] 跳过: {ie}")
