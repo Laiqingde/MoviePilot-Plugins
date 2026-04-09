@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.2.2"
+    plugin_version = "1.3.0"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -505,6 +505,15 @@ class CloudDriveSearch(_PluginBase):
     _search_in_system: bool = True
     _timeout: int = 15
 
+    # 保存原始方法引用
+    _original_search_by_title = None
+    _patched: bool = False
+    # 调用追踪
+    _last_call_time: str = ""
+    _last_call_keyword: str = ""
+    _last_call_result_count: int = 0
+    _call_count: int = 0
+
     def init_plugin(self, config: dict = None):
         if config:
             self._enabled = config.get("enabled", False)
@@ -523,87 +532,133 @@ class CloudDriveSearch(_PluginBase):
             self._search_in_system = config.get("search_in_system", True)
             self._timeout = int(config.get("timeout") or 15)
 
+        # Patch SearchChain 注入云盘搜索
+        if self._enabled and self._search_in_system:
+            self._patch_search_chain()
+        else:
+            self._unpatch_search_chain()
+
+    def _patch_search_chain(self):
+        """Monkey-patch SearchChain 将云盘结果注入系统搜索"""
+        if self._patched:
+            return
+        try:
+            from app.chain.search import SearchChain
+            from app.schemas.context import TorrentInfo
+
+            # 保存原始方法
+            if not CloudDriveSearch._original_search_by_title:
+                CloudDriveSearch._original_search_by_title = \
+                    SearchChain.search_by_title
+
+            plugin = self
+
+            def patched_search_by_title(chain_self, title: str = None,
+                                        page: int = 0, area: str = "title",
+                                        **kwargs):
+                """增强的搜索方法：原始搜索 + 云盘搜索"""
+                # 调用原始搜索
+                original_results = \
+                    CloudDriveSearch._original_search_by_title(
+                        chain_self, title=title, page=page,
+                        area=area, **kwargs)
+                if original_results is None:
+                    original_results = []
+
+                # 执行云盘搜索
+                try:
+                    plugin._call_count += 1
+                    plugin._last_call_time = datetime.now().strftime(
+                        "%Y-%m-%d %H:%M:%S")
+                    plugin._last_call_keyword = title or ""
+
+                    if not title:
+                        return original_results
+
+                    logger.info(
+                        f"[CloudDriveSearch] 云盘搜索开始: {title}")
+                    raw = plugin._do_search(keyword=title, page=page + 1)
+                    cloud_results = []
+                    for item in raw:
+                        ti = plugin._to_torrent_info(item)
+                        if ti:
+                            cloud_results.append(ti)
+
+                    plugin._last_call_result_count = len(cloud_results)
+                    logger.info(
+                        f"[CloudDriveSearch] 云盘搜索完成，"
+                        f"共 {len(cloud_results)} 条结果，"
+                        f"原始结果 {len(original_results)} 条")
+
+                    # 合并结果
+                    original_results.extend(cloud_results)
+                except Exception as e:
+                    logger.error(
+                        f"[CloudDriveSearch] 云盘搜索异常: {e}")
+
+                return original_results
+
+            SearchChain.search_by_title = patched_search_by_title
+            self._patched = True
+            logger.info(
+                "[CloudDriveSearch] 已 patch SearchChain.search_by_title")
+
+        except Exception as e:
+            logger.error(
+                f"[CloudDriveSearch] patch SearchChain 失败: {e}")
+
+    def _unpatch_search_chain(self):
+        """还原 SearchChain"""
+        if not self._patched:
+            return
+        try:
+            from app.chain.search import SearchChain
+            if CloudDriveSearch._original_search_by_title:
+                SearchChain.search_by_title = \
+                    CloudDriveSearch._original_search_by_title
+                self._patched = False
+                logger.info(
+                    "[CloudDriveSearch] 已还原 SearchChain.search_by_title")
+        except Exception as e:
+            logger.error(
+                f"[CloudDriveSearch] 还原 SearchChain 失败: {e}")
+
     def get_state(self) -> bool:
         return self._enabled
 
     def stop_service(self):
-        pass
-
-    # 搜索缓存：避免每个站点重复搜索云盘
-    _search_cache: dict = {}
-    _search_cache_keyword: str = ""
-    # 调用追踪
-    _last_call_time: str = ""
-    _last_call_keyword: str = ""
-    _last_call_result_count: int = 0
-    _call_count: int = 0
+        self._unpatch_search_chain()
 
     # --------------------------------------------------------
-    # 系统搜索集成
+    # 系统搜索集成（保留 get_module 用于未来兼容）
     # --------------------------------------------------------
     def get_module(self) -> Dict[str, Any]:
-        """重载 search_torrents 模块方法，将网盘结果注入系统搜索"""
         if self._enabled and self._search_in_system:
-            return {"search_torrents": self.search_torrents}
+            return {"search_torrents": self._search_torrents_for_module}
         return {}
 
-    def search_torrents(self, site=None, keyword: str = None,
-                        mtype=None, page: int = 0,
-                        **kwargs) -> Optional[List[Any]]:
-        """
-        系统搜索模块方法（V2签名：keyword为单个字符串）
-        search_torrents 会被每个站点调用一次，
-        使用缓存避免重复搜索云盘资源。
-        返回 List[TorrentInfo] 合并到系统搜索结果中。
-        """
-        # 记录调用
-        self._call_count += 1
-        self._last_call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self._last_call_keyword = keyword or ""
-        logger.info(
-            f"[CloudDriveSearch] search_torrents 被调用! "
-            f"keyword={keyword}, site={site}, "
-            f"mtype={mtype}, page={page}, "
-            f"call_count={self._call_count}")
-
+    def _search_torrents_for_module(self, site=None, keyword: str = None,
+                                    mtype=None, page: int = 0,
+                                    **kwargs) -> Optional[List[Any]]:
+        """备用：如果框架支持 get_module 会走这个路径"""
         if not self._enabled or not keyword:
-            logger.warning(
-                f"[CloudDriveSearch] 跳过: enabled={self._enabled}, "
-                f"keyword={keyword}")
             return None
-
         try:
             from app.schemas.context import TorrentInfo
         except ImportError:
-            logger.error("无法导入 TorrentInfo，系统搜索集成失败")
             return None
 
-        # 使用缓存：相同关键词只搜索一次
-        cache_key = f"{keyword}:{page}"
-        if cache_key == self._search_cache_keyword and self._search_cache:
-            cached = self._search_cache.get(cache_key, [])
-            logger.info(
-                f"[CloudDriveSearch] 返回缓存结果: {len(cached)} 条")
-            self._last_call_result_count = len(cached)
-            return cached
+        self._call_count += 1
+        self._last_call_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._last_call_keyword = keyword or ""
 
-        # 第一次搜索此关键词
-        logger.info(f"[CloudDriveSearch] 网盘资源搜索开始: {keyword}")
         raw = self._do_search(keyword=keyword, page=page + 1)
         all_results = []
         for item in raw:
             ti = self._to_torrent_info(item)
             if ti:
                 all_results.append(ti)
-
-        # 缓存结果
-        self._search_cache_keyword = cache_key
-        self._search_cache[cache_key] = all_results
         self._last_call_result_count = len(all_results)
-
-        logger.info(
-            f"[CloudDriveSearch] 网盘搜索完成，"
-            f"共 {len(all_results)} 条结果")
         return all_results if all_results else None
 
     def _to_torrent_info(self, item: dict):
@@ -785,6 +840,7 @@ class CloudDriveSearch(_PluginBase):
             "pansou_url": self._pansou_url,
             "yz_url": self._yz_url,
             "active_backends": [b.name for b in self._get_active_backends()],
+            "search_chain_patched": self._patched,
             "call_tracking": {
                 "call_count": self._call_count,
                 "last_call_time": self._last_call_time,
