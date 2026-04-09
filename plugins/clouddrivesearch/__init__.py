@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.6.1"
+    plugin_version = "1.7.0"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -585,13 +585,22 @@ class CloudDriveSearch(_PluginBase):
                         try:
                             ti = plugin._to_torrent_info(item)
                             if ti:
-                                # 包装为 Context（和原始结果格式一致）
                                 meta = MetaInfo(
                                     title=ti.title,
                                     subtitle=ti.description)
                                 ctx = Context(
                                     meta_info=meta,
                                     torrent_info=ti)
+                                # 动态添加 to_dict（兼容不同版本）
+                                if not hasattr(ctx, 'to_dict'):
+                                    ctx.to_dict = lambda c=ctx: {
+                                        "torrent_info": c.torrent_info.dict()
+                                        if c.torrent_info else {},
+                                        "meta_info": {
+                                            "title": getattr(
+                                                c.meta_info, 'name', '')
+                                            if c.meta_info else ''},
+                                    }
                                 cloud_items.append(ctx)
                         except Exception as ie:
                             logger.debug(
@@ -673,6 +682,18 @@ class CloudDriveSearch(_PluginBase):
                                     torrent_info=ti,
                                     media_info=media_info,
                                     meta_info=meta)
+                                if not hasattr(ctx, 'to_dict'):
+                                    ctx.to_dict = lambda c=ctx: {
+                                        "torrent_info": c.torrent_info.dict()
+                                        if c.torrent_info else {},
+                                        "media_info": c.media_info.dict()
+                                        if c.media_info and hasattr(
+                                            c.media_info, 'dict') else {},
+                                        "meta_info": {
+                                            "title": getattr(
+                                                c.meta_info, 'name', '')
+                                            if c.meta_info else ''},
+                                    }
                                 original_results.append(ctx)
                                 count += 1
                             except Exception as ce:
