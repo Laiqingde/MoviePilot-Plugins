@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.6.0"
+    plugin_version = "1.6.1"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -929,9 +929,10 @@ class CloudDriveSearch(_PluginBase):
         return {"code": 0, "data": status}
 
     def api_test_torrent(self) -> dict:
-        """测试 TorrentInfo 序列化"""
+        """测试 Context(TorrentInfo) 序列化"""
         try:
-            from app.schemas.context import TorrentInfo
+            from app.schemas.context import TorrentInfo, Context
+            from app.core.metainfo import MetaInfo
             ti = TorrentInfo(
                 title="测试资源",
                 description="[115网盘] 测试",
@@ -943,18 +944,19 @@ class CloudDriveSearch(_PluginBase):
                 uploadvolumefactor=0.0,
                 downloadvolumefactor=0.0,
             )
-            # 测试各种序列化方法
-            result = {"fields": list(ti.__dict__.keys()) if hasattr(ti, '__dict__') else []}
-            if hasattr(ti, 'to_dict'):
-                result["to_dict"] = str(ti.to_dict())[:200]
-            if hasattr(ti, 'dict'):
-                result["dict"] = str(ti.dict())[:200]
-            if hasattr(ti, 'model_dump'):
-                result["model_dump"] = str(ti.model_dump())[:200]
-            result["methods"] = [m for m in dir(ti) if 'dict' in m.lower() or 'dump' in m.lower() or 'json' in m.lower()]
-            return {"code": 0, "data": result}
+            meta = MetaInfo(title=ti.title, subtitle=ti.description)
+            ctx = Context(meta_info=meta, torrent_info=ti)
+            # 测试 to_dict
+            ctx_dict = ctx.to_dict()
+            return {
+                "code": 0,
+                "context_to_dict_ok": True,
+                "context_keys": list(ctx_dict.keys()) if isinstance(ctx_dict, dict) else str(type(ctx_dict)),
+                "torrent_title": ctx_dict.get("torrent_info", {}).get("title", "?") if isinstance(ctx_dict, dict) else "?",
+            }
         except Exception as e:
-            return {"code": 1, "error": str(e)}
+            import traceback
+            return {"code": 1, "error": str(e), "trace": traceback.format_exc()}
 
     def api_debug(self) -> dict:
         """诊断信息"""
