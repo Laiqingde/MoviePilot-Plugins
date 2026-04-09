@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.5.0"
+    plugin_version = "1.5.1"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -607,18 +607,15 @@ class CloudDriveSearch(_PluginBase):
                 if original_results is None:
                     original_results = []
 
-                # 提取搜索关键词：从结果或媒体信息中获取
+                # 提取搜索关键词
                 search_keyword = None
                 try:
                     if original_results:
                         first = original_results[0]
-                        if hasattr(first, 'media_info'):
+                        if hasattr(first, 'media_info') and first.media_info:
                             mi = first.media_info
-                            search_keyword = getattr(
-                                mi, 'title', None) or getattr(
-                                mi, 'name', None)
-                    if not search_keyword and tmdbid:
-                        search_keyword = str(tmdbid)
+                            search_keyword = getattr(mi, 'title', None) \
+                                or getattr(mi, 'name', None)
                 except Exception:
                     pass
 
@@ -639,27 +636,31 @@ class CloudDriveSearch(_PluginBase):
                     raw = plugin._do_search(
                         keyword=search_keyword, page=1)
                     count = 0
-                    media_info = None
-                    if original_results and hasattr(
-                            original_results[0], 'media_info'):
-                        media_info = original_results[0].media_info
+                    media_info = original_results[0].media_info \
+                        if original_results else None
 
                     for item in raw:
                         ti = plugin._to_torrent_info(item)
                         if ti:
-                            meta = MetaInfo(title=ti.title)
-                            ctx = Context(
-                                torrent_info=ti,
-                                media_info=media_info,
-                                meta_info=meta)
-                            original_results.append(ctx)
-                            count += 1
+                            try:
+                                meta = MetaInfo(title=ti.title)
+                                ctx = Context(
+                                    torrent_info=ti,
+                                    media_info=media_info,
+                                    meta_info=meta)
+                                original_results.append(ctx)
+                                count += 1
+                            except Exception as ce:
+                                logger.debug(
+                                    f"[CloudDriveSearch] "
+                                    f"Context包装跳过: {ce}")
 
                     plugin._last_call_result_count = count
                     logger.info(
                         f"[CloudDriveSearch] 云盘搜索完成: {count} 条")
                 except Exception as e:
-                    logger.error(f"[CloudDriveSearch] 异常: {e}")
+                    logger.error(
+                        f"[CloudDriveSearch] search_by_id异常: {e}")
 
                 return original_results
 
