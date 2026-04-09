@@ -1209,7 +1209,7 @@ class CloudDriveSearch(_PluginBase):
                                                 "model": "pansou_url",
                                                 "label": "PanSou API地址",
                                                 "placeholder":
-                                                    "http://1.2.268.1.100"
+                                                    "http://192.168.1.100"
                                                     ":8888",
                                             },
                                         }
@@ -1296,7 +1296,7 @@ class CloudDriveSearch(_PluginBase):
                                                 "label":
                                                     "yz_pansearch API地址",
                                                 "placeholder":
-                                                    "http://1.2.268.1.100"
+                                                    "http://192.168.1.100"
                                                     ":8067",
                                             },
                                         }
