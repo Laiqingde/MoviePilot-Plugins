@@ -483,7 +483,7 @@ class CloudDriveSearch(_PluginBase):
                   "支持115、123、夸克、百度等网盘"
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/" \
                   "MoviePilot-Plugins/main/icons/clouddisk.png"
-    plugin_version = "1.3.0"
+    plugin_version = "1.4.0"
     plugin_author = "早点下班"
     author_url = "https://github.com/Laiqingde"
     plugin_config_prefix = "clouddrivesearch_"
@@ -507,6 +507,7 @@ class CloudDriveSearch(_PluginBase):
 
     # 保存原始方法引用
     _original_search_by_title = None
+    _original_process = None
     _patched: bool = False
     # 调用追踪
     _last_call_time: str = ""
@@ -544,64 +545,120 @@ class CloudDriveSearch(_PluginBase):
             return
         try:
             from app.chain.search import SearchChain
-            from app.schemas.context import TorrentInfo
 
-            # 保存原始方法
+            plugin = self
+
+            # === Patch process() ===
+            if not CloudDriveSearch._original_process:
+                CloudDriveSearch._original_process = SearchChain.process
+
+            def patched_process(chain_self, mediainfo=None, keyword: str = None,
+                                **kwargs):
+                """增强的 process：原始搜索 + 云盘搜索"""
+                original_results = CloudDriveSearch._original_process(
+                    chain_self, mediainfo=mediainfo, keyword=keyword,
+                    **kwargs)
+                if original_results is None:
+                    original_results = []
+
+                # 提取搜索关键词
+                search_keyword = keyword
+                if not search_keyword and mediainfo:
+                    search_keyword = getattr(mediainfo, 'title', None) \
+                        or getattr(mediainfo, 'name', '')
+
+                if not search_keyword:
+                    return original_results
+
+                try:
+                    from app.schemas.context import TorrentInfo, Context, \
+                        MetaInfo
+
+                    plugin._call_count += 1
+                    plugin._last_call_time = datetime.now().strftime(
+                        "%Y-%m-%d %H:%M:%S")
+                    plugin._last_call_keyword = search_keyword
+
+                    logger.info(
+                        f"[CloudDriveSearch] process 云盘搜索: "
+                        f"{search_keyword}")
+                    raw = plugin._do_search(
+                        keyword=search_keyword, page=1)
+                    cloud_count = 0
+                    for item in raw:
+                        ti = plugin._to_torrent_info(item)
+                        if ti:
+                            # 包装为 Context 对象
+                            meta = MetaInfo(title=ti.title)
+                            ctx = Context(
+                                torrent_info=ti,
+                                media_info=mediainfo,
+                                meta_info=meta)
+                            original_results.append(ctx)
+                            cloud_count += 1
+
+                    plugin._last_call_result_count = cloud_count
+                    logger.info(
+                        f"[CloudDriveSearch] process 云盘搜索完成，"
+                        f"共 {cloud_count} 条")
+                except Exception as e:
+                    logger.error(
+                        f"[CloudDriveSearch] process 云盘搜索异常: {e}")
+
+                return original_results
+
+            SearchChain.process = patched_process
+
+            # === Patch search_by_title() ===
             if not CloudDriveSearch._original_search_by_title:
                 CloudDriveSearch._original_search_by_title = \
                     SearchChain.search_by_title
 
-            plugin = self
-
             def patched_search_by_title(chain_self, title: str = None,
-                                        page: int = 0, area: str = "title",
                                         **kwargs):
-                """增强的搜索方法：原始搜索 + 云盘搜索"""
-                # 调用原始搜索
+                """增强的 search_by_title：原始搜索 + 云盘搜索"""
                 original_results = \
                     CloudDriveSearch._original_search_by_title(
-                        chain_self, title=title, page=page,
-                        area=area, **kwargs)
+                        chain_self, title=title, **kwargs)
                 if original_results is None:
                     original_results = []
 
-                # 执行云盘搜索
+                if not title:
+                    return original_results
+
                 try:
                     plugin._call_count += 1
                     plugin._last_call_time = datetime.now().strftime(
                         "%Y-%m-%d %H:%M:%S")
-                    plugin._last_call_keyword = title or ""
-
-                    if not title:
-                        return original_results
+                    plugin._last_call_keyword = title
 
                     logger.info(
-                        f"[CloudDriveSearch] 云盘搜索开始: {title}")
-                    raw = plugin._do_search(keyword=title, page=page + 1)
-                    cloud_results = []
+                        f"[CloudDriveSearch] search_by_title 云盘搜索: "
+                        f"{title}")
+                    raw = plugin._do_search(keyword=title, page=1)
+                    cloud_count = 0
                     for item in raw:
                         ti = plugin._to_torrent_info(item)
                         if ti:
-                            cloud_results.append(ti)
+                            original_results.append(ti)
+                            cloud_count += 1
 
-                    plugin._last_call_result_count = len(cloud_results)
+                    plugin._last_call_result_count = cloud_count
                     logger.info(
-                        f"[CloudDriveSearch] 云盘搜索完成，"
-                        f"共 {len(cloud_results)} 条结果，"
-                        f"原始结果 {len(original_results)} 条")
-
-                    # 合并结果
-                    original_results.extend(cloud_results)
+                        f"[CloudDriveSearch] search_by_title 云盘完成，"
+                        f"共 {cloud_count} 条")
                 except Exception as e:
                     logger.error(
-                        f"[CloudDriveSearch] 云盘搜索异常: {e}")
+                        f"[CloudDriveSearch] search_by_title 异常: {e}")
 
                 return original_results
 
             SearchChain.search_by_title = patched_search_by_title
+
             self._patched = True
             logger.info(
-                "[CloudDriveSearch] 已 patch SearchChain.search_by_title")
+                "[CloudDriveSearch] 已 patch SearchChain "
+                "(process + search_by_title)")
 
         except Exception as e:
             logger.error(
@@ -616,9 +673,11 @@ class CloudDriveSearch(_PluginBase):
             if CloudDriveSearch._original_search_by_title:
                 SearchChain.search_by_title = \
                     CloudDriveSearch._original_search_by_title
-                self._patched = False
-                logger.info(
-                    "[CloudDriveSearch] 已还原 SearchChain.search_by_title")
+            if CloudDriveSearch._original_process:
+                SearchChain.process = \
+                    CloudDriveSearch._original_process
+            self._patched = False
+            logger.info("[CloudDriveSearch] 已还原 SearchChain")
         except Exception as e:
             logger.error(
                 f"[CloudDriveSearch] 还原 SearchChain 失败: {e}")
